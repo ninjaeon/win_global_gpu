@@ -1,9 +1,12 @@
 // #![windows_subsystem = "windows"] // this prevents the gui?
 
 use std::env;
+use std::fs;
+use std::path::Path;
 use std::sync::OnceLock;
 
 use anyhow::{anyhow, Result};
+use rustc_hash::FxHashSet;
 use windows::core::HSTRING;
 
 use crate::panic::setup_panic_hook;
@@ -20,6 +23,38 @@ mod panic;
 mod prevent_duplicate;
 mod registry;
 mod winapp_scan;
+
+fn load_exclusions() -> FxHashSet<String> {
+    let mut exclusions = FxHashSet::default();
+    if let Ok(exe_path) = env::current_exe() {
+        if let Some(dir) = exe_path.parent() {
+            let exclusion_file_path = dir.join("excluded_exes.txt");
+            if exclusion_file_path.exists() {
+                match fs::read_to_string(&exclusion_file_path) {
+                    Ok(content) => {
+                        for line in content.lines() {
+                            let trimmed_line = line.trim();
+                            if !trimmed_line.is_empty() && !trimmed_line.starts_with('#') {
+                                exclusions.insert(trimmed_line.to_lowercase());
+                            }
+                        }
+                        println!("Loaded {} exclusion(s) from {}", exclusions.len(), exclusion_file_path.display());
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Error reading {}: {}. Proceeding without exclusions.",
+                            exclusion_file_path.display(),
+                            e
+                        );
+                    }
+                }
+            } else {
+                println!("{} not found. No EXEs will be excluded.", exclusion_file_path.display());
+            }
+        }
+    }
+    exclusions
+}
 
 fn unplug() {
     let res =
@@ -92,16 +127,16 @@ static PROGRAMS: OnceLock<Vec<HSTRING>> = OnceLock::new();
 fn kill_duplicate() -> Result<bool> {
     unsafe { prevent_duplicate::kill_older_process() }
 }
-fn set_programs() -> Result<()> {
+fn set_programs(exclusions: &FxHashSet<String>) -> Result<()> {
     PROGRAMS
-        .set(full_win_scan::get_all_programs()?)
+        .set(full_win_scan::get_all_programs(exclusions)?)
         .map_err(|_| anyhow!("Failed to store program list."))
 }
-fn core(use_optimus: bool) -> Result<()> {
+fn core(use_optimus: bool, exclusions: &FxHashSet<String>) -> Result<()> {
     setup_panic_hook();
     kill_duplicate()?;
     if !use_optimus {
-        set_programs()?;
+        set_programs(exclusions)?;
     }
     notification::register()?;
     // only hide console in release mode
@@ -132,10 +167,14 @@ fn main() -> Result<()> {
     optimus::testing()?;
     let mut pargs = pico_args::Arguments::from_env();
     let use_optimus = pargs.contains(["-o", "--optimus"]);
+
+    // Load exclusions early
+    let exclusions = load_exclusions();
+
     match pargs.subcommand()? {
         None => {
             elevate::elevate_if_needed()?;
-            core(use_optimus)?;
+            core(use_optimus, &exclusions)?;
         }
         Some(arg) => {
             match arg.as_str() {
@@ -148,7 +187,7 @@ fn main() -> Result<()> {
                 }
                 "dedicated" => {
                     elevate::elevate_if_needed()?;
-                    set_programs()?;
+                    set_programs(&exclusions)?;
                     unsafe {
                         if use_optimus {
                             optimus::dedicated()?;
@@ -163,7 +202,7 @@ fn main() -> Result<()> {
                 }
                 "integrated" => {
                     elevate::elevate_if_needed()?;
-                    set_programs()?;
+                    set_programs(&exclusions)?;
                     unsafe {
                         if use_optimus {
                             optimus::integrated()?;
