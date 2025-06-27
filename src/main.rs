@@ -92,6 +92,48 @@ fn load_specific_exes(filename: &str) -> FxHashSet<String> {
     specific_exes
 }
 
+fn load_excluded_dirs() -> Vec<String> {
+    let mut excluded_dirs = Vec::new();
+    if let Ok(exe_path) = env::current_exe() {
+        if let Some(dir) = exe_path.parent() {
+            let excluded_dirs_file_path = dir.join("excluded_dirs.txt");
+            if excluded_dirs_file_path.exists() {
+                match fs::read_to_string(&excluded_dirs_file_path) {
+                    Ok(content) => {
+                        for line in content.lines() {
+                            let trimmed_line = line.trim();
+                            if !trimmed_line.is_empty() && !trimmed_line.starts_with('#') {
+                                let mut normalized_path = trimmed_line.to_lowercase();
+                                // Ensure consistent trailing slash for starts_with matching
+                                if !normalized_path.ends_with('\\') && !normalized_path.ends_with('/') {
+                                    normalized_path.push('\\');
+                                }
+                                // Replace forward slashes with backslashes for consistency on Windows
+                                excluded_dirs.push(normalized_path.replace('/', "\\"));
+                            }
+                        }
+                        println!(
+                            "Loaded {} director(y/ies) to exclude from {}",
+                            excluded_dirs.len(),
+                            excluded_dirs_file_path.display()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Error reading {}: {}. Proceeding without directory exclusions.",
+                            excluded_dirs_file_path.display(),
+                            e
+                        );
+                    }
+                }
+            } else {
+                println!("{} not found. No directories will be excluded.", excluded_dirs_file_path.display());
+            }
+        }
+    }
+    excluded_dirs
+}
+
 // These functions are called by charging_events, they need access to the exclusion/specific lists.
 // A simple way is to have them load the lists themselves, or we refactor how they are called.
 // For now, let's assume they will load them. This is slightly inefficient but avoids major refactoring
@@ -103,6 +145,7 @@ fn unplug_action() {
     let exclusions = load_exclusions();
     let dedicated_exes = load_specific_exes("dedicated_exes.txt");
     let integrated_exes = load_specific_exes("integrated_exes.txt");
+    let excluded_dirs = load_excluded_dirs();
     let programs = PROGRAMS.get().expect("Programs not initialized before power event handling");
 
     let res = unsafe {
@@ -112,6 +155,7 @@ fn unplug_action() {
             &dedicated_exes,
             &integrated_exes,
             &exclusions,
+            &excluded_dirs,
         )
     };
     match res {
@@ -134,6 +178,7 @@ fn plug_action() {
     let exclusions = load_exclusions();
     let dedicated_exes = load_specific_exes("dedicated_exes.txt");
     let integrated_exes = load_specific_exes("integrated_exes.txt");
+    let excluded_dirs = load_excluded_dirs();
     let programs = PROGRAMS.get().expect("Programs not initialized before power event handling");
 
     let res = unsafe {
@@ -143,6 +188,7 @@ fn plug_action() {
             &dedicated_exes,
             &integrated_exes,
             &exclusions,
+            &excluded_dirs,
         )
     };
     match res {
@@ -215,6 +261,7 @@ fn core(
     _exclusions: &FxHashSet<String>,
     _dedicated_exes: &FxHashSet<String>,
     _integrated_exes: &FxHashSet<String>,
+    _excluded_dirs: &Vec<String>, // Added excluded_dirs
 ) -> Result<()> {
     setup_panic_hook();
     kill_duplicate()?;
@@ -259,11 +306,12 @@ fn main() -> Result<()> {
     let exclusions = load_exclusions();
     let dedicated_exes = load_specific_exes("dedicated_exes.txt");
     let integrated_exes = load_specific_exes("integrated_exes.txt");
+    let excluded_dirs = load_excluded_dirs();
 
     match pargs.subcommand()? {
         None => {
             elevate::elevate_if_needed()?;
-            core(use_optimus, &exclusions, &dedicated_exes, &integrated_exes)?;
+            core(use_optimus, &exclusions, &dedicated_exes, &integrated_exes, &excluded_dirs)?;
         }
         Some(arg) => {
             match arg.as_str() {
@@ -276,7 +324,7 @@ fn main() -> Result<()> {
                 }
                 "dedicated" => {
                     elevate::elevate_if_needed()?;
-                    set_programs()?; // set_programs will be changed to not take args
+                    set_programs()?;
                     unsafe {
                         if use_optimus {
                             optimus::dedicated()?;
@@ -287,6 +335,7 @@ fn main() -> Result<()> {
                                 &dedicated_exes,
                                 &integrated_exes,
                                 &exclusions,
+                                &excluded_dirs,
                             )?
                         }
                     };
@@ -294,7 +343,7 @@ fn main() -> Result<()> {
                 }
                 "integrated" => {
                     elevate::elevate_if_needed()?;
-                    set_programs()?; // set_programs will be changed to not take args
+                    set_programs()?;
                     unsafe {
                         if use_optimus {
                             optimus::integrated()?;
@@ -305,6 +354,7 @@ fn main() -> Result<()> {
                                 &dedicated_exes,
                                 &integrated_exes,
                                 &exclusions,
+                                &excluded_dirs,
                             )?
                         }
                     }
@@ -312,18 +362,18 @@ fn main() -> Result<()> {
                 }
                 "reset" => {
                     elevate::elevate_if_needed()?;
-                    // For reset, we still need the program list to identify items in specific lists.
                     set_programs()?;
                     unsafe {
                         if use_optimus {
                             optimus::reset()?;
                         } else {
                             registry::write_reg(
-                                PROGRAMS.get().unwrap_or(&vec![]), // Provide empty vec if PROGRAMS not set
+                                PROGRAMS.get().unwrap_or(&vec![]),
                                 registry::GpuMode::None,
                                 &dedicated_exes,
                                 &integrated_exes,
                                 &exclusions,
+                                &excluded_dirs,
                             )?
                         }
                     };

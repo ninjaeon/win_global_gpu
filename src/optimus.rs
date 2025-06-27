@@ -47,22 +47,24 @@ fn get_control_panel_path() -> Result<String> {
 */
 
 pub fn testing() -> Result<()> {
-    let automation = UIAutomation::new().unwrap();
-    let matcher = automation
-        .create_matcher()
-        .filter_fn(Box::new(|_e: &UIElement| todo!())) // Prefixed e with _
-        .timeout(0);
-    let _element = matcher.find_first(); // Prefixed element with _
-    if let Ok(notepad) = matcher.find_first() {
-        println!(
-            "Found: {} - {}",
-            notepad.get_name().unwrap(),
-            notepad.get_classname().unwrap()
-        );
-
-        let window: WindowControl = notepad.try_into().unwrap();
-        window.maximize().unwrap();
-    }
+    // Body commented out / made empty to prevent execution of incomplete UI automation
+    // and to address dead_code warning if not called from main.
+    // let automation = UIAutomation::new().unwrap();
+    // let matcher = automation
+    //     .create_matcher()
+    //     .filter_fn(Box::new(|_e: &UIElement| todo!()))
+    //     .timeout(0);
+    // let _element = matcher.find_first();
+    // if let Ok(notepad) = matcher.find_first() {
+    //     println!(
+    //         "Found: {} - {}",
+    //         notepad.get_name().unwrap(),
+    //         notepad.get_classname().unwrap()
+    //     );
+    //
+    //     let window: WindowControl = notepad.try_into().unwrap();
+    //     window.maximize().unwrap();
+    // }
     Ok(())
 }
 

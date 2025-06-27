@@ -38,6 +38,7 @@ pub unsafe fn write_reg(
     dedicated_exes: &FxHashSet<String>,
     integrated_exes: &FxHashSet<String>,
     excluded_exes: &FxHashSet<String>,
+    excluded_dirs: &Vec<String>, // Added excluded_dirs
 ) -> Result<()> {
     let transaction = CreateTransaction(
         std::ptr::null_mut(),
@@ -55,6 +56,7 @@ pub unsafe fn write_reg(
         dedicated_exes,
         integrated_exes,
         excluded_exes,
+        excluded_dirs, // Pass excluded_dirs here
     ) {
         Ok(_) => {
             CommitTransaction(transaction)?;
@@ -76,6 +78,7 @@ pub unsafe fn write_reg_transaction(
     dedicated_exes: &FxHashSet<String>,
     integrated_exes: &FxHashSet<String>,
     excluded_exes: &FxHashSet<String>,
+    excluded_dirs: &Vec<String>, // Added excluded_dirs
 ) -> Result<()> {
     let mut key = HKEY::default();
     match RegOpenKeyTransactedW(
@@ -140,11 +143,32 @@ pub unsafe fn write_reg_transaction(
         programs.len(),
         dedicated_exes.len(),
         integrated_exes.len(),
-        excluded_exes.len()
+        excluded_exes.len(),
+        // excluded_dirs.len() // TODO: Add this to the print
     );
+    println!("Registry: {} director(y/ies) in exclusion list.", excluded_dirs.len());
+
 
     for program_hstring_path in programs {
-        let filename_option = get_filename_from_hstring(program_hstring_path);
+        let program_full_path_str_lower = String::from_utf16_lossy(program_hstring_path.as_wide()).to_lowercase();
+
+        // First Check: Directory Exclusion (Highest Priority)
+        let mut is_in_excluded_dir = false;
+        for excluded_dir_path in excluded_dirs {
+            // excluded_dir_path is already normalized (lowercase, trailing \)
+            if program_full_path_str_lower.starts_with(excluded_dir_path) {
+                is_in_excluded_dir = true;
+                break;
+            }
+        }
+
+        if is_in_excluded_dir {
+            println!("Registry: Program '{}' is in an excluded directory. Skipping.", program_full_path_str_lower);
+            continue; // Skip this program entirely
+        }
+
+        // Proceed with filename-based logic if not excluded by directory
+        let filename_option = get_filename_from_hstring(program_hstring_path); // Extracts lowercase filename
 
         if filename_option.is_none() {
             // This might be a Windows Store app with a non-standard path, or other issue.
