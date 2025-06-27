@@ -251,7 +251,7 @@ fn prog() -> Result<String> {
 
 fn main() -> Result<()> {
     elevate::elevate_if_needed()?;
-    optimus::testing()?;
+    // optimus::testing()?; // Commented out to prevent panic from incomplete UI automation
     let mut pargs = pico_args::Arguments::from_env();
     let use_optimus = pargs.contains(["-o", "--optimus"]);
 
