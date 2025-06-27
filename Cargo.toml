@@ -34,6 +34,7 @@ windows = { version = "0.52.0", features = [
     "Win32_System_Registry"
 ] }
 winrt-toast = "0.1.1"
+bytemuck = { version = "1.15.0", features = ["derive"] } # Added bytemuck
 
 [build-dependencies]
 winres = "0.1.12"

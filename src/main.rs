@@ -2,7 +2,7 @@
 
 use std::env;
 use std::fs;
-use std::path::Path;
+// Removed: use std::path::Path;
 use std::sync::OnceLock;
 
 use anyhow::{anyhow, Result};
@@ -56,41 +56,112 @@ fn load_exclusions() -> FxHashSet<String> {
     exclusions
 }
 
-fn unplug() {
-    let res =
-        unsafe { registry::write_reg(PROGRAMS.get().unwrap(), registry::GpuMode::Integrated) };
+fn load_specific_exes(filename: &str) -> FxHashSet<String> {
+    let mut specific_exes = FxHashSet::default();
+    if let Ok(exe_path) = env::current_exe() {
+        if let Some(dir) = exe_path.parent() {
+            let specific_file_path = dir.join(filename);
+            if specific_file_path.exists() {
+                match fs::read_to_string(&specific_file_path) {
+                    Ok(content) => {
+                        for line in content.lines() {
+                            let trimmed_line = line.trim();
+                            if !trimmed_line.is_empty() && !trimmed_line.starts_with('#') {
+                                specific_exes.insert(trimmed_line.to_lowercase());
+                            }
+                        }
+                        println!(
+                            "Loaded {} entry(s) from {}",
+                            specific_exes.len(),
+                            specific_file_path.display()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Error reading {}: {}. Proceeding without its entries.",
+                            specific_file_path.display(),
+                            e
+                        );
+                    }
+                }
+            } else {
+                println!("{} not found. No specific EXEs will be loaded from this file.", specific_file_path.display());
+            }
+        }
+    }
+    specific_exes
+}
+
+// These functions are called by charging_events, they need access to the exclusion/specific lists.
+// A simple way is to have them load the lists themselves, or we refactor how they are called.
+// For now, let's assume they will load them. This is slightly inefficient but avoids major refactoring
+// of charging_events callback registration.
+// A better long-term solution might involve Arc<Mutex<ConfigData>> passed around.
+
+fn unplug_action() {
+    println!("Power event: Switching to Integrated GPU (with overrides)");
+    let exclusions = load_exclusions();
+    let dedicated_exes = load_specific_exes("dedicated_exes.txt");
+    let integrated_exes = load_specific_exes("integrated_exes.txt");
+    let programs = PROGRAMS.get().expect("Programs not initialized before power event handling");
+
+    let res = unsafe {
+        registry::write_reg(
+            programs,
+            registry::GpuMode::Integrated,
+            &dedicated_exes,
+            &integrated_exes,
+            &exclusions,
+        )
+    };
     match res {
         Ok(_) => {
-            println!("Wrote to registry!");
+            println!("Wrote to registry for integrated mode based on power event!");
             notification::toast(
-                "Set global GPU to integrated GPU.\nRestart programs to see changes.",
+                "Set global GPU to integrated GPU (with overrides).\nRestart programs to see changes.",
             )
             .unwrap();
         }
         Err(e) => {
-            notification::toast("Error writing to registry.").unwrap();
+            notification::toast("Error writing to registry for power event.").unwrap();
             dbg!(e);
         }
     }
 }
-fn plug() {
-    let res = unsafe { registry::write_reg(PROGRAMS.get().unwrap(), registry::GpuMode::Dedicated) };
+
+fn plug_action() {
+    println!("Power event: Switching to Dedicated GPU (with overrides)");
+    let exclusions = load_exclusions();
+    let dedicated_exes = load_specific_exes("dedicated_exes.txt");
+    let integrated_exes = load_specific_exes("integrated_exes.txt");
+    let programs = PROGRAMS.get().expect("Programs not initialized before power event handling");
+
+    let res = unsafe {
+        registry::write_reg(
+            programs,
+            registry::GpuMode::Dedicated,
+            &dedicated_exes,
+            &integrated_exes,
+            &exclusions,
+        )
+    };
     match res {
         Ok(_) => {
-            println!("Wrote to registry!");
+            println!("Wrote to registry for dedicated mode based on power event!");
             notification::toast(
-                "Set global GPU to dedicated GPU.\nRestart programs to see changes.",
+                "Set global GPU to dedicated GPU (with overrides).\nRestart programs to see changes.",
             )
             .unwrap();
         }
         Err(e) => {
-            notification::toast("Error writing to registry.").unwrap();
+            notification::toast("Error writing to registry for power event.").unwrap();
             dbg!(e);
         }
     }
 }
+
 fn plug_optimus() {
-    let res = unsafe { optimus::dedicated() };
+    let res = optimus::dedicated(); // Removed unnecessary unsafe block
     match res {
         Ok(_) => {
             println!("Changed to dedicated GPU!");
@@ -106,7 +177,7 @@ fn plug_optimus() {
     }
 }
 fn unplug_optimus() {
-    let res = unsafe { optimus::integrated() };
+    let res = optimus::integrated(); // Removed unnecessary unsafe block
     match res {
         Ok(_) => {
             println!("Changed to integrated GPU!");
@@ -127,16 +198,31 @@ static PROGRAMS: OnceLock<Vec<HSTRING>> = OnceLock::new();
 fn kill_duplicate() -> Result<bool> {
     unsafe { prevent_duplicate::kill_older_process() }
 }
-fn set_programs(exclusions: &FxHashSet<String>) -> Result<()> {
+
+// set_programs now loads all programs without any initial filtering.
+// Filtering and prioritization logic is handled by registry::write_reg.
+fn set_programs() -> Result<()> {
     PROGRAMS
-        .set(full_win_scan::get_all_programs(exclusions)?)
+        .set(full_win_scan::get_all_programs()?) // Will be changed in full_win_scan.rs
         .map_err(|_| anyhow!("Failed to store program list."))
 }
-fn core(use_optimus: bool, exclusions: &FxHashSet<String>) -> Result<()> {
+
+fn core(
+    use_optimus: bool,
+    // These are loaded in main and passed here to ensure they are available for power events
+    // if set_programs is called. However, plug_action/unplug_action now load them directly.
+    // Keeping them in the signature for now in case set_programs needs them, but it currently doesn't.
+    _exclusions: &FxHashSet<String>,
+    _dedicated_exes: &FxHashSet<String>,
+    _integrated_exes: &FxHashSet<String>,
+) -> Result<()> {
     setup_panic_hook();
     kill_duplicate()?;
     if !use_optimus {
-        set_programs(exclusions)?;
+        // Ensure programs are scanned and available for plug_action/unplug_action
+        if PROGRAMS.get().is_none() {
+            set_programs()?;
+        }
     }
     notification::register()?;
     // only hide console in release mode
@@ -147,7 +233,8 @@ fn core(use_optimus: bool, exclusions: &FxHashSet<String>) -> Result<()> {
     if use_optimus {
         unsafe { charging_events::register_events(unplug_optimus, plug_optimus)? }
     } else {
-        unsafe { charging_events::register_events(unplug, plug)? }
+        // Pass the new action functions that handle loading their own lists
+        unsafe { charging_events::register_events(unplug_action, plug_action)? }
     }
     Ok(())
 }
@@ -170,11 +257,13 @@ fn main() -> Result<()> {
 
     // Load exclusions early
     let exclusions = load_exclusions();
+    let dedicated_exes = load_specific_exes("dedicated_exes.txt");
+    let integrated_exes = load_specific_exes("integrated_exes.txt");
 
     match pargs.subcommand()? {
         None => {
             elevate::elevate_if_needed()?;
-            core(use_optimus, &exclusions)?;
+            core(use_optimus, &exclusions, &dedicated_exes, &integrated_exes)?;
         }
         Some(arg) => {
             match arg.as_str() {
@@ -187,7 +276,7 @@ fn main() -> Result<()> {
                 }
                 "dedicated" => {
                     elevate::elevate_if_needed()?;
-                    set_programs(&exclusions)?;
+                    set_programs()?; // set_programs will be changed to not take args
                     unsafe {
                         if use_optimus {
                             optimus::dedicated()?;
@@ -195,6 +284,9 @@ fn main() -> Result<()> {
                             registry::write_reg(
                                 PROGRAMS.get().unwrap(),
                                 registry::GpuMode::Dedicated,
+                                &dedicated_exes,
+                                &integrated_exes,
+                                &exclusions,
                             )?
                         }
                     };
@@ -202,7 +294,7 @@ fn main() -> Result<()> {
                 }
                 "integrated" => {
                     elevate::elevate_if_needed()?;
-                    set_programs(&exclusions)?;
+                    set_programs()?; // set_programs will be changed to not take args
                     unsafe {
                         if use_optimus {
                             optimus::integrated()?;
@@ -210,6 +302,9 @@ fn main() -> Result<()> {
                             registry::write_reg(
                                 PROGRAMS.get().unwrap(),
                                 registry::GpuMode::Integrated,
+                                &dedicated_exes,
+                                &integrated_exes,
+                                &exclusions,
                             )?
                         }
                     }
@@ -217,11 +312,19 @@ fn main() -> Result<()> {
                 }
                 "reset" => {
                     elevate::elevate_if_needed()?;
+                    // For reset, we still need the program list to identify items in specific lists.
+                    set_programs()?;
                     unsafe {
                         if use_optimus {
                             optimus::reset()?;
                         } else {
-                            registry::write_reg(&vec![], registry::GpuMode::None)?
+                            registry::write_reg(
+                                PROGRAMS.get().unwrap_or(&vec![]), // Provide empty vec if PROGRAMS not set
+                                registry::GpuMode::None,
+                                &dedicated_exes,
+                                &integrated_exes,
+                                &exclusions,
+                            )?
                         }
                     };
                     println!("Reset!");
