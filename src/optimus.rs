@@ -1,11 +1,11 @@
-use std::path;
+// Removed: use std::path;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result; // anyhow import for 'anyhow!' macro removed, Result kept.
 use uiautomation::actions::Window;
 use uiautomation::controls::WindowControl;
 use uiautomation::{UIAutomation, UIElement};
-use windows::core::HSTRING;
-use windows::Management::Deployment::PackageManager;
+// Removed: use windows::core::HSTRING;
+// Removed: use windows::Management::Deployment::PackageManager;
 
 /* // Commenting out unused function for now
 fn get_control_panel_winapp_dir() -> Result<HSTRING> {
